@@ -65,3 +65,4 @@ The application calculates:
 `Additional Service Total = Unit Price × Quantity`
 
 The additional service rows are added to the detailed quotation table, included in subtotal, VAT and grand total, and reflected in the branded PDF quotation and email attachment.
+# ENEQ-Solutions-LLC
