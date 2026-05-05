@@ -1,0 +1,17 @@
+bundle_type,bundle_name,size,mode,family,active
+" 24 ""Panorama HDMI ","24 ""Panorama HDMI","24""",HDMI,Touchwo/Other,True
+"15.6"" Touchwo Ultraslim BS Series","15.6"" Touchwo Ultraslim BS Series","15.6""",Standard,Touchwo/Other,True
+"15.6"" Ultra Slim FHD Lift","15.6"" Ultra Slim FHD Lift","15.6""",Standard,Touchwo/Other,True
+"18.5"" OPAL HD DUAL SCREEN","18.5"" OPAL HD DUAL SCREEN","18.5""",Standard,OPAL,True
+"19"" LANDING DUAL OPAL","19"" LANDING DUAL OPAL","19""",Standard,OPAL,True
+"21.5"" Ultra Slim FHD Lift","21.5"" Ultra Slim FHD Lift","21.5""",Standard,Touchwo/Other,True
+"23.5"" Ultra Slim FHD Lift","23.5"" Ultra Slim FHD Lift","23.5""",Standard,Touchwo/Other,True
+OPAL 10.4 LAN NETWORK,OPAL 10.4 LAN NETWORK,"10.4""",LAN Network,OPAL,True
+OPAL 10.4 MULTICASTING,OPAL 10.4 MULTICASTING,"10.4""",Multicasting,OPAL,True
+OPAL 10.4 STANDALONE USB UPDATE,OPAL 10.4 STANDALONE USB UPDATE,"10.4""",Standalone USB Update,OPAL,True
+OPAL 12.1 LAN NETWORK,OPAL 12.1 LAN NETWORK,"12.1""",LAN Network,OPAL,True
+OPAL 12.1 MULTICASTING,OPAL 12.1 MULTICASTING,"12.1""",Multicasting,OPAL,True
+OPAL 12.1 STANDALONE USB UPDATE,OPAL 12.1 STANDALONE USB UPDATE,"12.1""",Standalone USB Update,OPAL,True
+OPAL 15 LAN NETWORK,OPAL 15 LAN NETWORK,"15""",LAN Network,OPAL,True
+OPAL 15 MULTICASTING,OPAL 15 MULTICASTING,"15""",Multicasting,OPAL,True
+OPAL 15 STANDALONE USB UPDATE,OPAL 15 STANDALONE USB UPDATE,"15""",Standalone USB Update,OPAL,True

@@ -1,0 +1,29 @@
+part_no,description,category,unit_price_aed
+OP-150CP,"15"" OPAL PLUS Embedded Lift Display",Display,9256
+OP-120CP,"12.1"" OPAL PLUS Embedded Lift Display",Display,9256
+OP-104CP,"10.4"" OPAL PLUS Embedded Lift Display",Display,9256
+OPAL_BKT-150,MOUNTING BRACKET  BACKWARD COMPATIBILITY EMOTIVE iS2,Bracket,65
+CT-E10-SPI,Master Encoder (LAN Interface-SPI Controller),Controller,594
+CT-24V/5A,Power Supply 24V 5A,Power,410
+CT-SPE10,2 Wire To Single Port Network Interface With Din Mount,2 Wire,594
+CT-SWITCH-4P,Unmanaged 4 port Din-rail,N/w Switch,378
+ACC-CAT6,Cat6-CB,Cat6,45
+SR-PC,CMS Server Unit,Server,4616
+OP-DUALHDMI/HLS,Matrox® Maevex 6122 Dual HDMI Encoder with HLS Streaming,Encoder,19595
+SR-PGM,Layout Designer Software,Software,480
+PLC_185HD&T-LN,"LOAD NOTICE 18.5"" custom Black/White lettering",PLC,815
+CT-LCE12,12 Port Input/Output Interface Card For - KONE LCE Controller,Interface Card,650
+CT-2W4L,4 Port LAN to 2 wire VDSL2 adapto,,1170
+CB-LAN0.3M,CAT5 0.3M LAN Cable,,30
+OP-185HD&T[2.0],"OPAL HD Dual Screen 18.5""",Screen,19700
+"19"" OPAL SCP","19"" Landing DUAL OPAL 19""",Screen,9870
+PLC_190,"19""  Polycarbonate Window",Window,470
+RF-156US,"15.6"" Touchwo Ultraslim BS Series",Screen,3750
+FO-CONV,Travelling cable media converter,Cable,350
+FX-BR,Brackets,Bracket,200
+WIN-240P-HDMI," 24 ""Panorama HDMI - 700nits peak brightness with inbuilt Speakers & Exhaust system", Screen,2820
+WIN-280P-HDMI," 28"" Panorama HDMI - 700nits peak brightness with inbuilt Speakers & Exhaust system", Screen,3310
+WIN-385P-HDMI,"38.5""  Panorama HDMI - 700nits peak brightness with inbuilt Speakers & Exhaust system", Screen,4290
+RC-156BS-HDMI,"15.6"" ENGRID Ultra Slim FHD Lift Screens - HDMI", Screen,2680
+RC-215BS-HDMI,"21.5"""" ENGRID Ultra Slim FHD Lift Screens - HDMI", Screen,3220
+RC-235BS-HDMI,"23.5"" ENGRID Ultra Slim FHD Lift Screens - HDMI", Screen,3620
