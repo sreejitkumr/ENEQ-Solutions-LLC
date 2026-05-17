@@ -2,9 +2,11 @@ data/*.xlsx
 .env
 
 # Security - Never commit these files
+.streamlit/
 .streamlit/secrets.toml
 data/settings.json
 data/users.csv
+data/quote_log.csv
 
 # Python
 __pycache__/
@@ -46,6 +48,9 @@ venv.bak/
 # OS
 .DS_Store
 Thumbs.db
+
+# Generated attachments
+assets/attachments/
 
 # Logs
 *.log
