@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+import uuid
+import io
 
 import openpyxl
 import pandas as pd
@@ -38,31 +40,155 @@ CUSTOM_CSS = """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
-def parse_bundle_workbook(uploaded_file) -> tuple[pd.DataFrame, pd.DataFrame]:
-    wb = openpyxl.load_workbook(uploaded_file, data_only=True)
-    ws = wb[wb.sheetnames[0]]
-    rows = list(ws.values)
-    df = pd.DataFrame(rows[1:], columns=["_blank", "bundle_type", "part_no", "quantity", "price", "unique_bundle_type"])
-    df = df.drop(columns=["_blank"])
-    df = df[df["bundle_type"].notna()].copy()
+# File handling constants
+ALLOWED_EXTENSIONS = {'.pdf', '.jpeg', '.jpg', '.png', '.doc', '.xls', '.docx', '.xlsx'}
+MAX_FILE_SIZE_MB = 10
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+ATTACHMENTS_DIR = ASSET_DIR / "attachments"
+ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    def parse_bundle(name: str) -> pd.Series:
-        raw = str(name).strip()
-        match = re.search(r'(\d+(?:\.\d+)?)\s*"', raw) or re.search(r'(\d+(?:\.\d+)?)', raw)
-        size = f'{match.group(1)}"' if match else ""
-        upper = raw.upper()
-        mode = "Standalone USB Update" if "STANDALONE" in upper else "LAN Network" if "LAN NETWORK" in upper else "Multicasting" if "MULTICAST" in upper else "HDMI" if "HDMI" in upper else "Standard"
-        family = "OPAL" if "OPAL" in upper else "Touchwo/Other"
-        return pd.Series({"bundle_name": raw, "size": size, "mode": mode, "family": family})
 
-    bundle_catalog = pd.DataFrame(sorted(df["bundle_type"].dropna().unique()), columns=["bundle_type"])
-    bundle_catalog = bundle_catalog.join(bundle_catalog["bundle_type"].apply(parse_bundle))
-    bundle_catalog["active"] = True
-    pricing_df = repo.load_pricing()
-    bundle_components = df[["bundle_type", "part_no", "quantity"]].copy()
-    bundle_components = bundle_components.merge(pricing_df, on="part_no", how="left")
-    bundle_components["line_amount_aed"] = pd.to_numeric(bundle_components["quantity"], errors="coerce").fillna(0) * pd.to_numeric(bundle_components["unit_price_aed"], errors="coerce").fillna(0)
-    return bundle_catalog, bundle_components
+def validate_attachment(uploaded_file) -> tuple[bool, str]:
+    """Validate file type and size."""
+    if uploaded_file is None:
+        return False, ""
+    
+    file_ext = Path(uploaded_file.name).suffix.lower()
+    
+    if file_ext not in ALLOWED_EXTENSIONS:
+        return False, f"❌ File type '{file_ext}' not allowed. Supported: PDF, JPEG, JPG, PNG, DOC, DOCX, XLS, XLSX"
+    
+    if uploaded_file.size > MAX_FILE_SIZE_BYTES:
+        size_mb = uploaded_file.size / (1024 * 1024)
+        return False, f"❌ File size {size_mb:.2f}MB exceeds {MAX_FILE_SIZE_MB}MB limit"
+    
+    return True, "✅ File valid"
+
+
+def save_attachment(uploaded_file) -> tuple[bool, str, str | None]:
+    """Save attachment to session state and return unique ID."""
+    is_valid, message = validate_attachment(uploaded_file)
+    
+    if not is_valid:
+        return False, message, None
+    
+    # Create a unique ID for this file
+    file_id = str(uuid.uuid4())
+    file_name = f"{file_id}_{uploaded_file.name}"
+    file_path = ATTACHMENTS_DIR / file_name
+    file_bytes = uploaded_file.getvalue()
+    
+    # Save to disk so PDF links can resolve to an actual file path
+    with open(file_path, "wb") as f:
+        f.write(file_bytes)
+    
+    # Store in session state
+    if "attachments" not in st.session_state:
+        st.session_state.attachments = {}
+    
+    st.session_state.attachments[file_id] = {
+        "name": uploaded_file.name,
+        "data": file_bytes,
+        "size_mb": round(uploaded_file.size / (1024 * 1024), 2),
+        "path": str(file_path.resolve()),
+    }
+    
+    return True, message, file_id
+
+
+def load_bundle_components_for_bundle(repo: DataRepository, bundle_type: str) -> list[dict]:
+    components = repo.load_bundle_components()
+    bundle_rows = components[components["bundle_type"] == bundle_type].copy()
+    if bundle_rows.empty:
+        return []
+    bundle_rows["quantity"] = pd.to_numeric(bundle_rows["quantity"], errors="coerce").fillna(0)
+    bundle_rows["unit_price_aed"] = pd.to_numeric(bundle_rows["unit_price_aed"], errors="coerce").fillna(0.0)
+
+    records = []
+    for _, row in bundle_rows.iterrows():
+        records.append({
+            "part_no": str(row.get("part_no", "") or ""),
+            "description": str(row.get("description", "") or ""),
+            "category": str(row.get("category", "") or ""),
+            "quantity": int(row["quantity"]),
+            "unit_price_aed": float(row["unit_price_aed"]),
+            "deleted": False,
+        })
+    return records
+
+
+def render_bundle_components_editor(bundle_sel: dict, idx: int, repo: DataRepository) -> None:
+    if "components" not in bundle_sel or bundle_sel["components"] is None:
+        bundle_sel["components"] = []
+    if not bundle_sel["components"]:
+        bundle_sel["components"] = load_bundle_components_for_bundle(repo, bundle_sel["bundle_type"])
+
+    st.write("**Bundle Components:**")
+    if not bundle_sel["components"]:
+        st.info("No components found for this bundle.")
+
+    for comp_idx, comp in enumerate(bundle_sel["components"]):
+        if comp.get("deleted"):
+            continue
+
+        comp_col1, comp_col2, comp_col3, comp_col4, comp_col5 = st.columns([0.2, 0.25, 0.15, 0.2, 0.2])
+
+        with comp_col1:
+            st.caption("**Part No**")
+            bundle_sel["components"][comp_idx]["part_no"] = st.text_input(
+                "Part No",
+                value=comp.get("part_no", ""),
+                label_visibility="collapsed",
+                key=f"comp_part_{idx}_{comp_idx}"
+            )
+
+        with comp_col2:
+            st.caption("**Description**")
+            bundle_sel["components"][comp_idx]["description"] = st.text_input(
+                "Description",
+                value=comp.get("description", ""),
+                label_visibility="collapsed",
+                key=f"comp_desc_{idx}_{comp_idx}"
+            )
+
+        with comp_col3:
+            st.caption("**Qty**")
+            bundle_sel["components"][comp_idx]["quantity"] = st.number_input(
+                "Quantity",
+                min_value=1,
+                value=int(comp.get("quantity", 1)),
+                step=1,
+                label_visibility="collapsed",
+                key=f"comp_qty_{idx}_{comp_idx}"
+            )
+
+        with comp_col4:
+            st.caption("**Price (AED)**")
+            bundle_sel["components"][comp_idx]["unit_price_aed"] = st.number_input(
+                "Unit Price",
+                min_value=0.0,
+                value=float(comp.get("unit_price_aed", 0)),
+                step=10.0,
+                label_visibility="collapsed",
+                key=f"comp_price_{idx}_{comp_idx}"
+            )
+
+        with comp_col5:
+            st.write("")
+            if st.button("❌", key=f"delete_comp_{idx}_{comp_idx}", help="Delete component"):
+                bundle_sel["components"][comp_idx]["deleted"] = True
+                st.rerun()
+
+    if st.button("➕ Add Component", key=f"add_component_{idx}", use_container_width=True):
+        bundle_sel["components"].append({
+            "part_no": "",
+            "description": "",
+            "category": "",
+            "quantity": 1,
+            "unit_price_aed": 0.0,
+            "deleted": False,
+        })
+        st.rerun()
 
 
 def parse_pricing_workbook(uploaded_file) -> pd.DataFrame:
@@ -118,7 +244,7 @@ with selected_tabs[0]:
     if not is_sales:
         st.warning("Your role has view-only access. Please contact the admin for quotation generation access.")
     else:
-        col1, col2 = st.columns([1.15, 0.85])
+        col1, col2 = st.columns([1.0, 1.0])
         with col1:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             st.subheader("Customer & Project Details")
@@ -131,23 +257,102 @@ with selected_tabs[0]:
             project_name = st.text_input("Project / Building Name")
 
             st.subheader("Quotation Inputs")
+            q1, q2 = st.columns(2)
+            quote_number = q1.text_input("Zoho Books Quote Number", placeholder="e.g., ZB-2024-001", help="Enter the quote number from Zoho Books")
+            version = q2.text_input("Quote Version", value="1.0", placeholder="e.g., 1.0, 2.0, 1.1", help="Version number for tracking quote revisions")
+            
+            # Initialize bundle selection session state
+            if "selected_bundles" not in st.session_state:
+                st.session_state.selected_bundles = []
+            
+            # Bundle selection mode toggle
+            bundle_mode = st.radio("Bundle Selection Mode", ["Single Bundle", "Multiple Bundles"], horizontal=True, help="Select single or multiple bundles for this quotation")
+            
             bundle_options = get_bundle_options(repo)
-            selected_bundle = st.selectbox("Bundle Type", bundle_options)
-            details = get_bundle_details(repo, selected_bundle)
-            c5, c6, c7 = st.columns(3)
-            size = c5.text_input("Size", value=details.get("size", ""))
-            quantity = c6.number_input("Quantity", min_value=1, value=1, step=1)
+            selected_bundles_list = []
+            
+            if bundle_mode == "Single Bundle":
+                selected_bundle = st.selectbox("Bundle Type", bundle_options, key="single_bundle_select")
+                details = get_bundle_details(repo, selected_bundle)
+                c5, c6, c7 = st.columns(3)
+                size = c5.text_input("Size", value=details.get("size", ""))
+                quantity = c6.number_input("Quantity", min_value=1, value=1, step=1, key="single_bundle_qty")
+
+                if not st.session_state.selected_bundles or len(st.session_state.selected_bundles) != 1 or st.session_state.selected_bundles[0]["bundle_type"] != selected_bundle:
+                    st.session_state.selected_bundles = [{
+                        "bundle_type": selected_bundle,
+                        "quantity": int(quantity),
+                        "components": load_bundle_components_for_bundle(repo, selected_bundle),
+                        "id": "single_bundle",
+                    }]
+                else:
+                    st.session_state.selected_bundles[0]["quantity"] = int(quantity)
+
+                bundle_sel = st.session_state.selected_bundles[0]
+                with st.expander(f"🔧 Edit Components for {selected_bundle}", expanded=True):
+                    render_bundle_components_editor(bundle_sel, 0, repo)
+
+                selected_bundles_list = st.session_state.selected_bundles
+            else:
+                size = ""
+                quantity = 1
+                st.write("**Add or Edit Bundles:**")
+
+                col_bundle, col_qty, col_action = st.columns([0.4, 0.2, 0.4])
+                with col_bundle:
+                    new_bundle = st.selectbox("Select Bundle to Add", bundle_options, key="multi_bundle_select")
+                with col_qty:
+                    new_qty = st.number_input("Qty", min_value=1, value=1, step=1, key="multi_bundle_qty")
+                with col_action:
+                    st.write("")  # Spacer
+                    if st.button("➕ Add Bundle", use_container_width=True):
+                        if "selected_bundles" not in st.session_state:
+                            st.session_state.selected_bundles = []
+                        st.session_state.selected_bundles.append({
+                            "bundle_type": new_bundle,
+                            "quantity": int(new_qty),
+                            "components": [],
+                            "id": str(len(st.session_state.selected_bundles))
+                        })
+                        st.rerun()
+
+                if st.session_state.selected_bundles:
+                    st.markdown("---")
+                    st.write("**Selected Bundles:**")
+                    for idx, bundle_sel in enumerate(st.session_state.selected_bundles):
+                        with st.expander(f"🔧 {bundle_sel['bundle_type']} (Qty: {bundle_sel['quantity']})", expanded=False):
+                            exp_col1, exp_col2, exp_col3 = st.columns([0.35, 0.3, 0.35])
+
+                            with exp_col1:
+                                st.session_state.selected_bundles[idx]["quantity"] = st.number_input(
+                                    "Bundle Quantity",
+                                    min_value=1,
+                                    value=bundle_sel["quantity"],
+                                    step=1,
+                                    key=f"edit_bundle_qty_{idx}"
+                                )
+
+                            with exp_col3:
+                                st.write("")  # Spacer
+                                if st.button("🗑️ Remove Bundle", key=f"remove_bundle_{idx}", use_container_width=True):
+                                    st.session_state.selected_bundles.pop(idx)
+                                    st.rerun()
+
+                            render_bundle_components_editor(bundle_sel, idx, repo)
+
+                selected_bundles_list = st.session_state.selected_bundles if st.session_state.selected_bundles else []
+
             default_margin = float(settings.get("default_margin_pct", 20.0))
+            c7, c8, c9 = st.columns(3)
             if is_admin:
                 margin_pct = c7.number_input("Margin %", min_value=0.0, max_value=300.0, value=default_margin, step=0.5)
             else:
                 margin_pct = default_margin
                 c7.metric("Applied Margin %", f"{margin_pct:.2f}%")
-            c8, c9, c10 = st.columns(3)
             max_discount = 100.0 if is_admin else float(settings.get("max_sales_discount_pct", 5.0))
             discount_pct = c8.number_input("Discount %", min_value=0.0, max_value=max_discount, value=0.0, step=0.5)
             vat_pct = c9.number_input("VAT %", min_value=0.0, max_value=100.0, value=float(settings.get("vat_pct", 5.0)), step=0.5)
-            validity_days = c10.number_input("Validity Days", min_value=1, max_value=365, value=30, step=1)
+            validity_days = st.number_input("Validity Days", min_value=1, max_value=365, value=30, step=1)
 
             st.subheader("Additional Services (Optional)")
             st.caption("Select any required additional services. Enter unit price manually; system will multiply by service quantity and add it to the quotation total.")
@@ -169,9 +374,9 @@ with selected_tabs[0]:
                     disabled=not selected_service,
                 )
                 service_qty = s3.number_input(
-                    "Quantity",
+                    "Service Quantity",
                     min_value=1,
-                    value=int(quantity),
+                    value=1,
                     step=1,
                     key=f"additional_service_qty_{idx}",
                     disabled=not selected_service,
@@ -195,45 +400,163 @@ with selected_tabs[0]:
                 st.dataframe(additional_preview, use_container_width=True, hide_index=True)
                 st.info(f"Additional Services Total: AED {additional_preview['Line Total (AED)'].sum():,.2f}")
 
+            # File Attachments Section
+            st.subheader("Attachments (Optional)")
+            st.caption(f"Attach supporting documents (PDF, JPEG, JPG, PNG, DOC, DOCX, XLS, XLSX). Max {MAX_FILE_SIZE_MB}MB per file.")
+            
+            # Initialize attachment tracking
+            if "processed_files" not in st.session_state:
+                st.session_state.processed_files = set()
+            
+            attachment_files = []
+            uploaded_file = st.file_uploader(
+                "Upload files",
+                type=['pdf', 'jpeg', 'jpg', 'png', 'doc', 'docx', 'xls', 'xlsx'],
+                key="quotation_attachment_uploader",
+                accept_multiple_files=False,
+                help="Upload supporting documents to attach to this quotation"
+            )
+            
+            # Process uploaded file only if it hasn't been processed before
+            if uploaded_file is not None:
+                file_key = f"{uploaded_file.name}_{uploaded_file.size}"
+                if file_key not in st.session_state.processed_files:
+                    is_valid, validation_msg = validate_attachment(uploaded_file)
+                    if is_valid:
+                        success, save_msg, file_id = save_attachment(uploaded_file)
+                        if success:
+                            st.session_state.processed_files.add(file_key)
+                            st.success(f"📎 {uploaded_file.name} ({round(uploaded_file.size / (1024*1024), 2)}MB) - {save_msg}")
+                            attachment_files.append({
+                                "name": uploaded_file.name,
+                                "file_id": file_id,
+                                "size_mb": round(uploaded_file.size / (1024*1024), 2)
+                            })
+                    else:
+                        st.error(validation_msg)
+            
+            # Display attached files with remove button
+            if "attachments" in st.session_state and st.session_state.attachments:
+                st.write("**Attached Files:**")
+                for file_id, file_info in st.session_state.attachments.items():
+                    col_file, col_btn = st.columns([4, 1])
+                    col_file.write(f"📎 {file_info['name']} ({file_info['size_mb']}MB)")
+                    if col_btn.button("❌ Remove", key=f"remove_attachment_{file_id}", help="Click to remove this file"):
+                        # Remove file from session state
+                        if file_id in st.session_state.attachments:
+                            del st.session_state.attachments[file_id]
+                        st.success(f"File removed successfully!", icon="✅")
+                        # Rerun to refresh the UI and hide the removed file
+                        st.rerun()
+
             notes = st.text_area("Commercial Terms / Notes", value=settings.get("terms", ""), height=130)
             generate = st.button("Generate Quotation", type="primary", use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
         with col2:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
-            st.subheader("Bundle Snapshot")
-            st.write(f"**Family:** {details.get('family', '-')}")
-            st.write(f"**Mode:** {details.get('mode', '-')}")
-            st.write(f"**Detected Size:** {details.get('size', '-')}")
-            preview = repo.load_bundle_components()
-            preview = preview[preview["bundle_type"] == selected_bundle][["part_no", "description", "category", "quantity"]]
-            st.dataframe(preview, use_container_width=True, hide_index=True)
-            st.markdown("<div class='small-note'>Sales users can generate quotations using controlled margins and discount limits. Admin users can update catalogue, prices, users, logo and email settings.</div>", unsafe_allow_html=True)
+            
+            if bundle_mode == "Single Bundle":
+                st.subheader("📦 Bundle Snapshot")
+                # Display bundle details in a more compact format
+                detail_col1, detail_col2 = st.columns(2)
+                with detail_col1:
+                    st.write(f"**Family:**\n{details.get('family', '-')}")
+                    st.write(f"**Mode:**\n{details.get('mode', '-')}")
+                with detail_col2:
+                    st.write(f"**Size:**\n{details.get('size', '-')}")
+                
+                st.markdown("---")
+                st.caption("**Components in this Bundle:**")
+                preview = repo.load_bundle_components()
+                preview = preview[preview["bundle_type"] == selected_bundle][["part_no", "description", "category", "quantity"]]
+                
+                # Display with smaller font to fit better
+                if len(preview) > 0:
+                    st.dataframe(
+                        preview.rename(columns={
+                            "part_no": "Part",
+                            "description": "Description",
+                            "category": "Category",
+                            "quantity": "Qty"
+                        }),
+                        use_container_width=True,
+                        hide_index=True,
+                        height=250
+                    )
+                else:
+                    st.info("No components found for this bundle")
+            else:
+                st.subheader("📦 Selected Bundles Summary")
+                if st.session_state.selected_bundles:
+                    summary_data = []
+                    for bundle_sel in st.session_state.selected_bundles:
+                        bundle_name = bundle_sel['bundle_type']
+                        bundle_qty = bundle_sel['quantity']
+                        comp_count = len([c for c in bundle_sel.get('components', []) if not c.get('deleted', False)])
+                        summary_data.append({
+                            "Bundle": bundle_name,
+                            "Qty": bundle_qty,
+                            "Components": comp_count if comp_count > 0 else "Default"
+                        })
+                    summary_df = pd.DataFrame(summary_data)
+                    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No bundles selected. Add bundles above to continue.")
+            
+            st.markdown("<div class='small-note'><b>Role Info:</b> Sales users can generate quotations with controlled margins and discounts. Admin users can manage catalogue, prices, users, and settings.</div>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
         if generate:
-            request = QuoteRequest(
-                customer_name=customer_name,
-                customer_company=customer_company,
-                customer_email=customer_email,
-                customer_phone=customer_phone,
-                project_name=project_name,
-                bundle_type=selected_bundle,
-                size=size,
-                quantity=int(quantity),
-                discount_pct=float(discount_pct),
-                vat_pct=float(vat_pct),
-                validity_days=int(validity_days),
-                notes=notes,
-                margin_pct=float(margin_pct),
-                prepared_by=str(user.get("full_name", user.get("username", ""))),
-                additional_services=additional_services,
-            )
-            summary, table_df = calculate_quote(repo, request)
-            repo.append_quote_log(summary)
-            pdf_bytes = build_quote_pdf(summary, table_df, settings)
-            st.session_state["last_quote"] = {"summary": summary, "table_df": table_df, "pdf_bytes": pdf_bytes}
-            st.success(f"Quotation {summary['quote_number']} generated.")
+            # Validate quote number
+            if not quote_number or not quote_number.strip():
+                st.error("❌ Please enter the Zoho Books Quote Number before generating the quotation.")
+            elif not version or not version.strip():
+                st.error("❌ Please enter the Quote Version before generating the quotation.")
+            elif not selected_bundles_list:
+                st.error("❌ Please select at least one bundle before generating the quotation.")
+            else:
+                # Prepare attachments list
+                attachments_list = []
+                if "attachments" in st.session_state:
+                    for file_id, file_info in st.session_state.attachments.items():
+                        attachments_list.append({
+                            "file_id": file_id,
+                            "name": file_info["name"],
+                            "size_mb": file_info["size_mb"],
+                            "path": file_info.get("path", ""),
+                        })
+
+                for bundle_sel in selected_bundles_list:
+                    bundle_sel["components"] = [c for c in bundle_sel.get("components", []) if not c.get("deleted", False)]
+
+                request = QuoteRequest(
+                    customer_name=customer_name,
+                    customer_company=customer_company,
+                    customer_email=customer_email,
+                    customer_phone=customer_phone,
+                    project_name=project_name,
+                    bundle_type=selected_bundles_list[0]["bundle_type"],
+                    size=size,
+                    quantity=int(quantity),
+                    quote_number=quote_number.strip(),
+                    version=version.strip(),
+                    discount_pct=float(discount_pct),
+                    vat_pct=float(vat_pct),
+                    validity_days=int(validity_days),
+                    notes=notes,
+                    margin_pct=float(margin_pct),
+                    prepared_by=str(user.get("full_name", user.get("username", ""))),
+                    selected_bundles=selected_bundles_list,
+                    additional_services=additional_services,
+                    attachments=attachments_list,
+                )
+                summary, table_df = calculate_quote(repo, request)
+                repo.append_quote_log(summary)
+                pdf_bytes = build_quote_pdf(summary, table_df, settings)
+                # Attachment embedding disabled to restore stable PDF generation.
+                st.session_state["last_quote"] = {"summary": summary, "table_df": table_df, "pdf_bytes": pdf_bytes}
+                st.success(f"✅ Quotation {summary['quote_number']} v{summary['version']} generated successfully!")
 
         if "last_quote" in st.session_state:
             q = st.session_state["last_quote"]
@@ -249,6 +572,25 @@ with selected_tabs[0]:
             d1, d2 = st.columns(2)
             d1.download_button("Download Branded Quotation PDF", data=pdf_bytes, file_name=f"{summary['quote_number']}.pdf", mime="application/pdf", use_container_width=True)
             d2.download_button("Download Pricing Breakdown CSV", data=dataframe_to_csv_bytes(table_df), file_name=f"{summary['quote_number']}_breakdown.csv", mime="text/csv", use_container_width=True)
+            
+            # Download attachments if any
+            if summary.get("attachments"):
+                st.subheader("📎 Attached Documents")
+                att_cols = st.columns(len(summary.get("attachments", [])))
+                for idx, attachment in enumerate(summary.get("attachments", [])):
+                    with att_cols[idx]:
+                        file_id = attachment.get("file_id")
+                        file_name = attachment.get("name")
+                        if "attachments" in st.session_state and file_id in st.session_state.attachments:
+                            file_data = st.session_state.attachments[file_id]["data"]
+                            st.download_button(
+                                f"📥 {file_name}",
+                                data=file_data,
+                                file_name=file_name,
+                                mime="application/octet-stream",
+                                use_container_width=True
+                            )
+            
             with st.expander("Send quotation by email"):
                 email_to = st.text_input("To", value=summary.get("customer_email", ""))
                 email_cc = st.text_input("CC")
@@ -302,26 +644,98 @@ if is_admin:
         st.subheader("User Management")
         users = repo.load_users()
         show_users = users.drop(columns=["password_hash"], errors="ignore")
-        st.dataframe(show_users, use_container_width=True, hide_index=True)
-        with st.form("add_user"):
-            st.write("Add / Replace User")
-            u1, u2, u3 = st.columns(3)
-            new_username = u1.text_input("Username")
-            new_fullname = u2.text_input("Full Name")
-            new_role = u3.selectbox("Role", ["Admin", "Sales", "Viewer"])
-            u4, u5 = st.columns(2)
-            new_email = u4.text_input("Email")
-            new_password = u5.text_input("Password", type="password")
-            save_user = st.form_submit_button("Save User", type="primary")
-        if save_user:
-            if not new_username or not new_password:
-                st.error("Username and password are required.")
+
+        if "show_new_user_form" not in st.session_state:
+            st.session_state.show_new_user_form = False
+        if "show_reset_password" not in st.session_state:
+            st.session_state.show_reset_password = False
+
+        left, right = st.columns([2, 1])
+        with left:
+            st.write("### Existing Users")
+            st.markdown("Select a user from the table to edit or delete them.")
+            st.dataframe(show_users, use_container_width=True, hide_index=True)
+
+        with right:
+            if not show_users.empty:
+                selected_user = st.selectbox("Select user to manage", show_users["username"].tolist(), key="selected_user")
             else:
-                users = users[users["username"].astype(str).str.lower() != new_username.lower()]
-                users = pd.concat([users, pd.DataFrame([{"username": new_username, "password_hash": hash_password(new_password), "role": new_role, "full_name": new_fullname, "email": new_email}])], ignore_index=True)
-                repo.save_users(users)
-                st.success("User saved successfully.")
-                st.rerun()
+                selected_user = None
+
+            if st.button("➕ Create New User", type="secondary", use_container_width=True, key="new_user_button"):
+                st.session_state.show_new_user_form = True
+                st.session_state.show_reset_password = False
+
+            if selected_user:
+                selected_row = users[users["username"] == selected_user].iloc[0]
+                st.markdown("---")
+                st.write(f"### Edit {selected_user}")
+                with st.form("edit_user_form"):
+                    edit_fullname = st.text_input("Full Name", value=selected_row.get("full_name", ""))
+                    edit_role = st.selectbox("Role", ["Admin", "Sales", "Viewer"], index=["Admin", "Sales", "Viewer"].index(str(selected_row.get("role", "Viewer"))))
+                    edit_email = st.text_input("Email", value=selected_row.get("email", ""))
+                    save_changes = st.form_submit_button("Save Changes", type="primary")
+                if save_changes:
+                    users.loc[users["username"] == selected_user, "full_name"] = edit_fullname
+                    users.loc[users["username"] == selected_user, "role"] = edit_role
+                    users.loc[users["username"] == selected_user, "email"] = edit_email
+                    repo.save_users(users)
+                    st.success("User details updated successfully.")
+                    st.rerun()
+
+                st.markdown("---")
+                if st.button("🔒 Reset Password", use_container_width=True, key="reset_password_toggle"):
+                    st.session_state.show_reset_password = not st.session_state.show_reset_password
+
+                if st.session_state.show_reset_password:
+                    with st.form("reset_password_form"):
+                        reset_password = st.text_input("New Password", type="password")
+                        reset_password_confirm = st.text_input("Confirm New Password", type="password")
+                        reset_password_button = st.form_submit_button("Reset Password", type="primary")
+                    if reset_password_button:
+                        if not reset_password:
+                            st.error("Enter a new password to reset.")
+                        elif reset_password != reset_password_confirm:
+                            st.error("Passwords do not match.")
+                        else:
+                            users.loc[users["username"] == selected_user, "password_hash"] = hash_password(reset_password)
+                            repo.save_users(users)
+                            st.success(f"Password for {selected_user} has been reset.")
+                            st.session_state.show_reset_password = False
+                            st.rerun()
+
+                st.markdown("---")
+                if selected_user == user.get("username", ""):
+                    st.warning("You cannot delete the currently logged-in account.")
+                else:
+                    if st.button("🗑️ Delete User", type="secondary", use_container_width=True, key="delete_user_button"):
+                        users = users[users["username"] != selected_user]
+                        repo.save_users(users)
+                        st.success(f"User {selected_user} deleted.")
+                        st.rerun()
+
+        if st.session_state.show_new_user_form:
+            st.markdown("---")
+            st.subheader("Create New User")
+            with st.form("add_user_form"):
+                a1, a2, a3 = st.columns(3)
+                new_username = a1.text_input("Username")
+                new_fullname = a2.text_input("Full Name")
+                new_role = a3.selectbox("Role", ["Admin", "Sales", "Viewer"])
+                a4, a5 = st.columns(2)
+                new_email = a4.text_input("Email")
+                new_password = a5.text_input("Password", type="password")
+                create_user = st.form_submit_button("Create User", type="primary")
+            if create_user:
+                if not new_username or not new_password:
+                    st.error("Username and password are required.")
+                else:
+                    users = users[users["username"].astype(str).str.lower() != new_username.lower()]
+                    users = pd.concat([users, pd.DataFrame([{"username": new_username, "password_hash": hash_password(new_password), "role": new_role, "full_name": new_fullname, "email": new_email}])], ignore_index=True)
+                    repo.save_users(users)
+                    st.success("User created successfully.")
+                    st.session_state.show_new_user_form = False
+                    st.rerun()
 
     with selected_tabs[4]:
         st.subheader("Company Branding & Email Settings")

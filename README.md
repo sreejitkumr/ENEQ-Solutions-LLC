@@ -11,29 +11,54 @@ streamlit run app.py
 
 ## Default test logins
 
-Change these before production.
+**⚠️ CRITICAL: Change these default passwords immediately after first login!**
 
 | Username | Password | Role |
 |---|---|---|
-| admin | admin123 | Admin |
-| sales | sales123 | Sales |
-| viewer | viewer123 | Viewer |
+| admin | Adm!n2024#Secure | Admin |
+| sales | S@les2024#Secure | Sales |
+| viewer | View2024#Secure | Viewer |
 
-## New features
+## Security Setup (Required for Production)
 
-- ENEQ branded PDF quotation with logo support
-- Customer details and project details
-- Auto email sending with PDF attachment using SMTP
-- Margin control and sales discount limit
-- Multi-user login with Admin, Sales and Viewer roles
-- Admin upload for Bundle Types and Pricing masters
-- Quotation history log
+### 1. SMTP Password Security
+
+**NEVER store SMTP passwords in plain text!** Use one of these secure methods:
+
+#### Option A: Streamlit Secrets (Recommended for Streamlit Cloud)
+1. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`
+2. Fill in your actual SMTP password:
+   ```toml
+   [smtp]
+   password = "your-actual-smtp-password"
+   ```
+3. **Never commit `secrets.toml` to version control**
+
+#### Option B: Environment Variables (Recommended for other platforms)
+Set the environment variable:
+```bash
+export SMTP_PASSWORD="your-actual-smtp-password"
+```
+
+### 2. User Management
+- Change all default passwords immediately
+- Create individual user accounts for each team member
+- Use strong, unique passwords
+- Regularly rotate passwords
+
+### 3. Data Security
+- The `data/` directory contains sensitive business data
+- Regularly back up this directory
+- Consider encrypting sensitive files in production
+- Never commit user data or settings to version control
 
 ## Email setup
 
-In `Company & Email Settings`, configure SMTP host, port, username and app password.
+In `Company & Email Settings`, configure SMTP host, port, username.
 
-For Gmail or Microsoft 365, use an app password or authenticated SMTP account. Do not use your normal mailbox password in production.
+For Gmail or Microsoft 365, use an app password or authenticated SMTP account. **Do not use your normal mailbox password in production.**
+
+The SMTP password will be securely loaded from Streamlit secrets or environment variables.
 
 ## Roles
 
@@ -43,11 +68,41 @@ For Gmail or Microsoft 365, use an app password or authenticated SMTP account. D
 
 ## Production recommendations
 
-- Replace default test passwords immediately
-- Restrict access to HTTPS
-- Use environment variables or Streamlit secrets for SMTP password in production
-- Back up `/data` regularly
-- Review generated PDF before sending to customers
+- ✅ **Replace default test passwords immediately** (see Security Setup above)
+- ✅ **Use Streamlit secrets or environment variables for SMTP password** (see Security Setup above)
+- ✅ **Restrict access to HTTPS** (automatic on most deployment platforms)
+- ✅ **Back up `/data` directory regularly**
+- ✅ **Review generated PDF before sending to customers**
+- ✅ **Use strong passwords for all user accounts**
+- ✅ **Regularly update dependencies**
+- ✅ **Monitor application logs for security issues**
+- ✅ **Consider implementing rate limiting for login attempts**
+
+## Deployment Options
+
+### Streamlit Cloud (Recommended)
+1. Push code to a **public** GitHub repository
+2. Set up `.streamlit/secrets.toml` with your SMTP password
+3. Deploy at [share.streamlit.io](https://share.streamlit.io)
+
+### Heroku
+1. Create `Procfile`:
+   ```
+   web: streamlit run app.py --server.port $PORT --server.headless true
+   ```
+2. Set environment variable: `SMTP_PASSWORD=your-password`
+3. Deploy: `git push heroku main`
+
+### Railway / Render
+1. Connect GitHub repository
+2. Set environment variable: `SMTP_PASSWORD=your-password`
+3. Deploy automatically
+
+### Local Production Server
+```bash
+export SMTP_PASSWORD="your-password"
+streamlit run app.py --server.port 8501 --server.headless true
+```
 
 ## Additional Services Feature
 
